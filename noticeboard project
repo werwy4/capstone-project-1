@@ -1,0 +1,263 @@
+import tkinter as tk
+from tkinter import simpledialog, messagebox
+from datetime import datetime
+import json
+
+# Path to the file where notices will be saved
+NOTICES_FILE = "notices.json"
+
+# Function to load notices from a file
+def load_notices():
+    try:
+        with open(NOTICES_FILE, "r") as file:
+            notices = json.load(file)
+            return [(n["notice"], datetime.fromisoformat(n["expire_time"]), n["username"]) for n in notices]
+    except FileNotFoundError:
+        return []
+
+# Function to save notices to a file
+def save_notices():
+    with open(NOTICES_FILE, "w") as file:
+        json.dump([{"notice": n, "expire_time": e.isoformat(), "username": u} for n, e, u in global_notices], file)
+
+# Global list to hold notices with their expiration datetime
+global_notices = load_notices()
+
+class LoginWindow:
+    def _init_(self, root):
+        self.root = root
+        self.root.title("Login")
+        self.root.configure(bg='sky blue')
+
+        # Set the window to full screen
+        self.root.attributes('-fullscreen', True)
+
+        self.create_widgets()
+
+    def create_widgets(self):
+        label = tk.Label(self.root, text="Choose User Type:", font=('Arial', 14), bg='sky blue')
+        label.pack(pady=20)
+
+        student_button = tk.Button(self.root, text="Student", command=lambda: self.login(False), font=('Arial', 12))
+        student_button.pack(pady=10)
+
+        faculty_button = tk.Button(self.root, text="Faculty", command=lambda: self.login(True), font=('Arial', 12))
+        faculty_button.pack(pady=10)
+
+    def login(self, is_faculty):
+        self.root.destroy()  # Close the login window
+        new_root = tk.Tk()
+        new_root.title("SIMATS ENGINEERING NOTICE BOARD")
+        new_root.configure(bg='sky blue')
+
+        # Set the window to full screen
+        new_root.attributes('-fullscreen', True)
+
+        try:
+            user_id = simpledialog.askstring("User ID", "Enter your user ID:", parent=new_root)
+
+            if user_id:
+                # Check if user_id is numeric for students
+                if not is_faculty and not user_id.isdigit():
+                    raise ValueError("Student user ID should be numeric.")
+
+                password = simpledialog.askstring("Password", "Enter your password:", show='*', parent=new_root)
+
+                if is_faculty:
+                    if password == "faculty123":  # Faculty password check
+                        app = NoticeBoard(new_root, user_id, True)
+                    else:
+                        raise ValueError("Invalid password for faculty")
+                else:
+                    if password == "student123":  # Student password check
+                        app = NoticeBoard(new_root, user_id, False)
+                    else:
+                        raise ValueError("Invalid password for student")
+            else:
+                raise ValueError("User ID cannot be empty.")
+
+            new_root.mainloop()
+
+        except Exception as e:
+            messagebox.showerror("Error", str(e), parent=new_root)
+
+class NoticeBoard:
+    def _init_(self, root, user_id, is_faculty):
+        self.root = root
+        self.user_id = user_id
+        self.is_faculty = is_faculty
+
+        # Initialize widgets to None
+        self.notice_entry = None
+        self.time_entry = None
+        self.date_entry = None
+        self.add_button = None
+        self.remove_button = None
+        self.edit_button = None
+        self.switch_view_button = None
+        self.username_label = None
+
+        self.create_widgets()
+
+        # Populate initial notices from the global list
+        self.update_notice_listbox()
+
+        # Disable notice entry and modification for students
+        if not self.is_faculty:
+            self.disable_for_students()
+
+        # Start the periodic check for expired notices
+        self.check_expired_notices()
+
+    def create_widgets(self):
+        self.title_label = tk.Label(self.root, text="SIMATS ENGINEERING NOTICE BOARD", font=('Arial', 18, 'bold'), bg='sky blue')
+        self.title_label.pack(pady=20)
+
+        self.notice_listbox = tk.Listbox(self.root, width=80, height=20, bg='sky blue', fg='black', font=('Arial', 12))
+        self.notice_listbox.pack(pady=10)
+
+        if self.is_faculty:
+            self.username_label = tk.Label(self.root, text=f"Logged in as: {self.user_id}", font=('Arial', 12), bg='sky blue')
+            self.username_label.pack(pady=5)
+
+            self.frame = tk.Frame(self.root, bg='sky blue')
+            self.frame.pack(pady=10)
+
+            self.notice_entry = tk.Entry(self.frame, width=50, font=('Arial', 12))
+            self.notice_entry.pack(side=tk.LEFT, padx=10)
+
+            date_label = tk.Label(self.frame, text="Date (DD/MM/YYYY):", font=('Arial', 12), bg='sky blue')
+            date_label.pack(side=tk.LEFT, padx=10)
+
+            self.date_entry = tk.Entry(self.frame, width=20, font=('Arial', 12))
+            self.date_entry.pack(side=tk.LEFT, padx=10)
+            self.date_entry.insert(0, "DD/MM/YYYY")
+
+            time_label = tk.Label(self.frame, text="Time (HH:MM AM/PM):", font=('Arial', 12), bg='sky blue')
+            time_label.pack(side=tk.LEFT, padx=10)
+
+            self.time_entry = tk.Entry(self.frame, width=20, font=('Arial', 12))
+            self.time_entry.pack(side=tk.LEFT, padx=10)
+            self.time_entry.insert(0, "HH:MM AM/PM")
+
+            self.add_button = tk.Button(self.frame, text="Add Notice", command=self.add_notice, font=('Arial', 12))
+            self.add_button.pack(side=tk.LEFT)
+
+            self.action_frame = tk.Frame(self.root, bg='sky blue')
+            self.action_frame.pack(pady=10)
+
+            self.switch_view_button = tk.Button(self.action_frame, text="Switch to Student View", command=self.switch_view, font=('Arial', 12))
+            self.switch_view_button.pack(side=tk.LEFT, padx=10)
+
+            self.edit_button = tk.Button(self.action_frame, text="Edit Selected Notice", command=self.edit_notice, font=('Arial', 12))
+            self.edit_button.pack(side=tk.RIGHT, padx=10)
+
+            self.remove_button = tk.Button(self.action_frame, text="Remove Selected Notice", command=self.remove_notice, font=('Arial', 12))
+            self.remove_button.pack(side=tk.RIGHT, padx=10)
+
+            self.logout_button = tk.Button(self.root, text="Exit", command=self.logout, font=('Arial', 12), bg='red', fg='white')
+            self.logout_button.pack(padx=20, pady=10, anchor=tk.NE)  # Top-right corner
+
+        else:  # Student view
+            self.logout_button = tk.Button(self.root, text="Exit", command=self.logout, font=('Arial', 12), bg='red', fg='white')
+            self.logout_button.pack(padx=20, pady=10, anchor=tk.NE)  # Top-right corner
+
+    def disable_for_students(self):
+        widgets_to_disable = [self.notice_entry, self.date_entry, self.time_entry, self.add_button, self.remove_button, self.edit_button]
+        for widget in widgets_to_disable:
+            if widget is not None:
+                widget.config(state=tk.DISABLED)
+
+    def add_notice_to_listbox(self, notice, expire_time, username):
+        formatted_notice = f"{notice} (Expires at {expire_time.strftime('%I:%M %p on %d %b %Y')})"
+        if self.is_faculty:
+            formatted_notice += f" - {username}"
+        self.notice_listbox.insert(tk.END, formatted_notice)
+
+    def update_notice_listbox(self):
+        self.notice_listbox.delete(0, tk.END)
+        for notice, expire_time, username in global_notices:
+            self.add_notice_to_listbox(notice, expire_time, username)
+
+    def add_notice(self):
+        notice = self.notice_entry.get()
+        date_str = self.date_entry.get()
+        time_str = self.time_entry.get()
+        if notice and date_str and time_str:
+            try:
+                expire_time = datetime.strptime(date_str + ' ' + time_str, '%d/%m/%Y %I:%M %p')
+                global_notices.append((notice, expire_time, self.user_id))
+                save_notices()  # Save notices to file
+                self.update_notice_listbox()
+                self.notice_entry.delete(0, tk.END)
+                self.date_entry.delete(0, tk.END)
+                self.time_entry.delete(0, tk.END)
+            except ValueError:
+                messagebox.showwarning("Input Error", "Invalid date or time format. Please use DD/MM/YYYY and HH:MM AM/PM.")
+        else:
+            messagebox.showwarning("Input Error", "Please enter a notice, date, and time before adding.")
+
+    def remove_notice(self):
+        selected_index = self.notice_listbox.curselection()
+        if selected_index:
+            del global_notices[selected_index[0]]
+            save_notices()  # Save notices to file
+            self.update_notice_listbox()
+        else:
+            messagebox.showwarning("Selection Error", "Please select a notice to remove.")
+
+    def edit_notice(self):
+        selected_index = self.notice_listbox.curselection()
+        if selected_index:
+            old_notice, old_expire_time, username = global_notices[selected_index[0]]
+            new_notice = simpledialog.askstring("Edit Notice", "Edit your notice:", initialvalue=old_notice)
+            if new_notice:
+                date_str = self.date_entry.get()
+                time_str = self.time_entry.get()
+                if date_str and time_str:
+                    try:
+                        new_expire_time = datetime.strptime(date_str + ' ' + time_str, '%d/%m/%Y %I:%M %p')
+                        global_notices[selected_index[0]] = (new_notice, new_expire_time, username)
+                        save_notices()  # Save notices to file
+                        self.update_notice_listbox()
+                    except ValueError:
+                        messagebox.showwarning("Input Error", "Invalid date or time format. Please use DD/MM/YYYY and HH:MM AM/PM.")
+                else:
+                    global_notices[selected_index[0]] = (new_notice, old_expire_time, username)
+                    save_notices()  # Save notices to file
+                    self.update_notice_listbox()
+        else:
+            messagebox.showwarning("Selection Error", "Please select a notice to edit.")
+
+    def check_expired_notices(self):
+        now = datetime.now()
+        expired_indices = [index for index, (_, expire_time, _) in enumerate(global_notices) if expire_time < now]
+
+        for index in reversed(expired_indices):
+            del global_notices[index]
+            self.update_notice_listbox()
+        save_notices()  # Save notices to file after removing expired ones
+
+        self.root.after(60000, self.check_expired_notices)  # Check every minute
+
+    def switch_view(self):
+        if self.switch_view_button['text'] == "Switch to Student View":
+            self.disable_for_students()
+            self.switch_view_button.config(text="Switch to Faculty View")
+        else:
+            self.enable_for_faculty()
+            self.switch_view_button.config(text="Switch to Student View")
+
+    def enable_for_faculty(self):
+        widgets_to_enable = [self.notice_entry, self.date_entry, self.time_entry, self.add_button, self.remove_button, self.edit_button, self.switch_view_button]
+        for widget in widgets_to_enable:
+            if widget is not None:
+                widget.config(state=tk.NORMAL)
+
+    def logout(self):
+        self.root.destroy()  # Close the tkinter window
+
+if _name_ == "_main_":
+    root = tk.Tk()
+    login_window = LoginWindow(root)  # Create an instance of LoginWindow
+    root.mainloop()
